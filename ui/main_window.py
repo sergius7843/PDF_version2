@@ -12,6 +12,7 @@ from core.image_loader import ImageLoader, IMG_EXTS
 from core.shortcuts import setup_shortcuts
 from core.pdf_exporter import PDFExporter
 from core.group_handler import GroupHandler
+from core.image_processor import auto_crop_document
 
 
 class MainWindow(QMainWindow):
@@ -71,6 +72,22 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(self.rename_panel, stretch=0)
         right_widget = QWidget()
         right_widget.setLayout(right_layout)
+
+        # Panel derecho: agregar botones de edición antes de rename_panel
+        edit_layout = QHBoxLayout()
+        edit_layout.setContentsMargins(0, 4, 0, 4)
+        edit_layout.setSpacing(6)
+
+        self.auto_crop_btn = QPushButton("Recorte Automático")
+        self.auto_crop_btn.clicked.connect(self.auto_crop_current)
+        edit_layout.addWidget(self.auto_crop_btn)
+
+        # Placeholder para más botones en futuras subfases
+        edit_layout.addStretch()
+
+        right_layout.addLayout(edit_layout)
+        right_layout.addWidget(self.viewer, stretch=1)
+        right_layout.addWidget(self.rename_panel, stretch=0)
 
         # Splitter
         splitter = QSplitter()
@@ -219,13 +236,13 @@ class MainWindow(QMainWindow):
                 try:
                     if data['type'] == 'single':
                         path = data['path']
-                        angle = self.viewer.editor.rotation_for(path)
-                        self.pdf_exporter.export_image_to_pdf(path, save_path, angle)
+                        image = self.viewer.editor.get_current_image(path)
+                        self.pdf_exporter.export_image_to_pdf(image, save_path)
                     elif data['type'] == 'group':
                         group = data['group']
                         paths = group['paths']
-                        angles = [self.viewer.editor.rotation_for(p) for p in paths]
-                        self.pdf_exporter.export_images_to_pdf(paths, angles, save_path)
+                        images = [self.viewer.editor.get_current_image(p) for p in paths]
+                        self.pdf_exporter.export_images_to_pdf(images, save_path)
                     QMessageBox.information(self, "Éxito", f"PDF guardado en:\n{save_path}")
                 except Exception as e:
                     QMessageBox.critical(self, "Error", f"No se pudo exportar: {e}")
@@ -262,8 +279,8 @@ class MainWindow(QMainWindow):
                 name = f"documento_{count + 1}"
             save_path = os.path.join(output_dir, f"{name}.pdf")
             try:
-                angle = self.viewer.editor.rotation_for(path)
-                self.pdf_exporter.export_image_to_pdf(path, save_path, angle)
+                image = self.viewer.editor.get_current_image(path)
+                self.pdf_exporter.export_image_to_pdf(image, save_path)
             except Exception as e:
                 errors.append(f"{name}: {e}")
             count += 1
@@ -282,8 +299,8 @@ class MainWindow(QMainWindow):
             save_path = os.path.join(output_dir, f"{name}.pdf")
             try:
                 paths = group['paths']
-                angles = [self.viewer.editor.rotation_for(p) for p in paths]
-                self.pdf_exporter.export_images_to_pdf(paths, angles, save_path)
+                images = [self.viewer.editor.get_current_image(p) for p in paths]
+                self.pdf_exporter.export_images_to_pdf(images, save_path)
             except Exception as e:
                 errors.append(f"{name}: {e}")
             count += 1
@@ -394,3 +411,28 @@ class MainWindow(QMainWindow):
         else:
             self.viewer.set_image(None)
             self.rename_panel.set_name("")
+
+    def auto_crop_current(self):
+        idx = self.list_widget.currentRow()
+        if idx < 0:
+            return
+        item = self.list_widget.item(idx)
+        data = item.data(Qt.ItemDataRole.UserRole)
+        if data['type'] != 'single':
+            QMessageBox.warning(self, "Selección", "El recorte automático solo funciona en imágenes individuales.")
+            return
+
+        path = data['path']
+        try:
+            current_img = self.viewer.editor.get_current_image(path)
+            cropped = auto_crop_document(current_img)
+            if cropped is None:
+                QMessageBox.information(self, "Información", "No se detectó un documento para recortar automáticamente.")
+                return
+            self.viewer.editor.set_edited(path, cropped)
+            self.viewer.editor.rotations[path] = 0  # Resetear rotación (ya "horneada" en la editada)
+            self.viewer.refresh()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Fallo en recorte automático: {str(e)}")
+
+    
